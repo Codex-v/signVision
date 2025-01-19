@@ -1,11 +1,15 @@
-from flask import Flask, Response, render_template, jsonify, request
+from flask import Flask, Response, render_template, jsonify, request, session, redirect, url_for, flash
 import cv2
 from sign2 import SignLanguageDetector
 import threading
 import json
 import time
+import mysql.connector
+from mysql.connector import Error
+import hashlib
 
 app = Flask(__name__)
+app.secret_key = 'your_secret_key_here'  # Change this to a secure secret key
 
 # Global variables for sharing state between threads
 detector = None
@@ -15,7 +19,53 @@ current_frame = None
 detection_running = False
 translation_history = []
 
+# Database configuration
+DB_CONFIG = {
+    'host': 'localhost',
+    'user': 'root',
+    'password': 'root',
+    'database': 'visionMaster'
+}
 
+def create_db_connection():
+    """Create database connection"""
+    try:
+        connection = mysql.connector.connect(**DB_CONFIG)
+        return connection
+    except Error as e:
+        print(f"Error connecting to MySQL database: {e}")
+        return None
+
+def init_database():
+    """Initialize database and create users table if it doesn't exist"""
+    connection = create_db_connection()
+    if connection:
+        try:
+            cursor = connection.cursor()
+            
+            # Create users table
+            create_table_query = """
+            CREATE TABLE IF NOT EXISTS users (
+                id INT AUTO_INCREMENT PRIMARY KEY,
+                username VARCHAR(50) UNIQUE NOT NULL,
+                password VARCHAR(256) NOT NULL,
+                email VARCHAR(100) UNIQUE NOT NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+            """
+            cursor.execute(create_table_query)
+            connection.commit()
+            
+        except Error as e:
+            print(f"Error creating table: {e}")
+        finally:
+            if connection.is_connected():
+                cursor.close()
+                connection.close()
+
+def hash_password(password):
+    """Hash password using SHA-256"""
+    return hashlib.sha256(password.encode()).hexdigest()
 
 class Camera:
     def __init__(self):
@@ -87,18 +137,133 @@ def generate_frames():
         yield (b'--frame\r\n'
                b'Content-Type: image/jpeg\r\n\r\n' + frame + b'\r\n')
 
-
-
-
 @app.route('/')
 def index():
     """Render main page"""
-    return render_template('index.html')
+    if 'user_id' in session:
+        return redirect(url_for('dashboard'))
+    return render_template('login_registration.html')
 
-@app.route('/login')
-def user_login():
-    """Render login page"""
-    return render_template('login.html')
+@app.route('/login', methods=['POST'])
+def login():
+    """Handle user login"""
+    if request.method == 'POST':
+        email = request.form.get('email')
+        password = request.form.get('password')
+        
+        if not all([email, password]):
+            return jsonify({
+                'status': 'error',
+                'message': 'Email and password are required'
+            })
+        
+        connection = create_db_connection()
+        if connection:
+            try:
+                cursor = connection.cursor(dictionary=True)
+                
+                # First, get the user without checking password
+                cursor.execute("SELECT * FROM users WHERE email = %s", (email,))
+                user = cursor.fetchone()
+
+                
+                if user:
+                    # Compare the hashed password
+                    input_password_hash = hash_password(password)
+                    stored_password_hash = user['password']
+                    
+                    print(f"Input password hash: {input_password_hash}")
+                    print(f"Stored password hash: {stored_password_hash}")
+                    
+                    if input_password_hash == stored_password_hash:
+                        session['user_id'] = user['id']
+                        session['username'] = user['username']
+                        return jsonify({
+                            'status': 'success',
+                            'message': 'Login successful',
+                            'redirect': url_for('dashboard')
+                        })
+                
+                return jsonify({
+                    'status': 'error',
+                    'message': 'Invalid email or password'
+                })
+                
+            except Error as e:
+                print(f"Database error: {e}")  # Add debug logging
+                return jsonify({
+                    'status': 'error',
+                    'message': f'Login failed: {str(e)}'
+                })
+            finally:
+                if connection.is_connected():
+                    cursor.close()
+                    connection.close()
+
+@app.route('/register', methods=['POST'])
+def register():
+    """Handle user registration"""
+    if request.method == 'POST':
+        username = request.form.get('username')
+        email = request.form.get('email')
+        password = request.form.get('password')
+        
+        if not all([username, email, password]):
+            return jsonify({
+                'status': 'error',
+                'message': 'All fields are required'
+            })
+        
+        connection = create_db_connection()
+        if connection:
+            try:
+                cursor = connection.cursor()
+                
+                # Check if username or email already exists
+                cursor.execute("SELECT * FROM users WHERE username = %s OR email = %s", 
+                             (username, email))
+                if cursor.fetchone():
+                    return jsonify({
+                        'status': 'error',
+                        'message': 'Username or email already exists'
+                    })
+                
+                # Insert new user
+                hashed_password = hash_password(password)
+                cursor.execute(
+                    "INSERT INTO users (username, email, password) VALUES (%s, %s, %s)",
+                    (username, email, hashed_password)
+                )
+                connection.commit()
+                
+                return jsonify({
+                    'status': 'success',
+                    'message': 'Registration successful! Please login.'
+                })
+                
+            except Error as e:
+                return jsonify({
+                    'status': 'error',
+                    'message': f'Registration failed: {str(e)}'
+                })
+            finally:
+                if connection.is_connected():
+                    cursor.close()
+                    connection.close()
+        return Response(status=200)
+
+@app.route('/logout')
+def logout():
+    """Handle user logout"""
+    session.clear()
+    return redirect(url_for('index'))
+
+@app.route('/dashboard')
+def dashboard():
+    """Display dashboard"""
+    if 'user_id' not in session:
+        return redirect(url_for('index'))
+    return render_template('index.html', username=session.get('username'))
 
 @app.route('/video_feed')
 def video_feed():
