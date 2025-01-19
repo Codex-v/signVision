@@ -1,0 +1,2 @@
+2024-12-10 23:50:09,447 - ERROR - Error loading classifiers: 'HandGestureRecognizer' object has no attribute '_load_keypoint_classifier'
+2024-12-10 23:50:40,737 - ERROR - Error loading classifiers: 'HandGestureRecognizer' object has no attribute '_load_keypoint_classifier'

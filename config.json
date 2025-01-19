@@ -1,0 +1,29 @@
+{
+    "hand_detection": {
+        "static_mode": false,
+        "max_hands": 2,
+        "detection_confidence": 0.5,
+        "tracking_confidence": 0.5
+    },
+    "training": {
+        "samples_per_sign": 100,
+        "test_size": 0.2,
+        "random_state": 42
+    },
+    "prediction": {
+        "confidence_threshold": 0.6,
+        "cooldown_seconds": 2
+    },
+    "ui": {
+        "max_history": 5,
+        "overlay_opacity": 0.7
+    },
+    "performance": {
+        "fps_window": 30
+    },
+    "paths": {
+        "models": "models",
+        "data": "data",
+        "logs": "logs"
+    }
+}
