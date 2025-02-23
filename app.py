@@ -9,7 +9,7 @@ from mysql.connector import Error
 import hashlib
 
 app = Flask(__name__)
-app.secret_key = 'your_secret_key_here'  # Change this to a secure secret key
+app.secret_key = 'app8isCool'  # Change this to a secure secret key
 
 # Global variables for sharing state between threads
 detector = None
@@ -137,6 +137,28 @@ def generate_frames():
         yield (b'--frame\r\n'
                b'Content-Type: image/jpeg\r\n\r\n' + frame + b'\r\n')
 
+
+def remove_sign_from_db(sign_name):
+    """Remove a sign from the database"""
+    connection = create_db_connection()
+    if connection:
+        try:
+            cursor = connection.cursor()
+            delete_query = "DELETE FROM signs WHERE name = %s"
+            cursor.execute(delete_query, (sign_name,))
+            connection.commit()
+            return True
+        except Error as e:
+            print(f"Error removing sign from database: {e}")
+            return False
+        finally:
+            if connection.is_connected():
+                cursor.close()
+                connection.close()
+    return False
+
+
+
 @app.route('/')
 def index():
     """Render main page"""
@@ -144,6 +166,64 @@ def index():
         return redirect(url_for('dashboard'))
     return render_template('login_registration.html')
 
+
+
+@app.route('/remove_sign', methods=['POST'])
+def remove_sign():
+    """Remove a trained sign from the system"""
+    global detector
+    if not detector:
+        return jsonify({
+            'status': 'error',
+            'message': 'Detector not initialized'
+        })
+
+    try:
+        data = request.get_json()
+        if not data or 'sign_name' not in data:
+            return jsonify({
+                'status': 'error',
+                'message': 'No sign name provided'
+            })
+
+        sign_name = data['sign_name']
+        print(f"Attempting to remove sign: {sign_name}")  # Debug log
+
+        if sign_name not in detector.trained_signs:
+            return jsonify({
+                'status': 'error',
+                'message': f'Sign {sign_name} not found in trained signs'
+            })
+
+        success = detector.remove_sign(sign_name)
+        if success:
+            # Remove the sign from the database
+            db_success = remove_sign_from_db(sign_name)
+            if db_success:
+                return jsonify({
+                    'status': 'success',
+                    'message': f'Successfully removed sign: {sign_name}',
+                    'trained_signs': detector.trained_signs  # Send updated list
+                })
+            else:
+                return jsonify({
+                    'status': 'error',
+                    'message': f'Failed to remove sign from database: {sign_name}'
+                })
+        else:
+            return jsonify({
+                'status': 'error',
+                'message': f'Failed to remove sign: {sign_name}'
+            })
+
+    except Exception as e:
+        print(f"Error in remove_sign route: {str(e)}")  # Debug log
+        return jsonify({
+            'status': 'error',
+            'message': f'Server error: {str(e)}'
+        })
+
+    
 @app.route('/login', methods=['POST'])
 def login():
     """Handle user login"""

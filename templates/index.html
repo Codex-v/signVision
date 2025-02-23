@@ -52,6 +52,12 @@
             z-index: 1000;
             display: none;
         }
+
+        /* Add styles for disabled state */
+        .btn:disabled {
+            cursor: not-allowed;
+            opacity: 0.6;
+        }
     </style>
 </head>
 <body>
@@ -59,6 +65,10 @@
     <nav class="navbar navbar-expand-lg navbar-dark bg-dark">
         <div class="container">
             <a class="navbar-brand" href="/">Sign Language Detection System</a>
+            <div class="ms-auto">
+                <span class="navbar-text text-light">Welcome, {{ username }}</span>
+                <a href="/logout" class="btn btn-outline-light ms-3">Logout</a>
+            </div>
         </div>
     </nav>
 
@@ -99,18 +109,29 @@
                             <div class="input-group">
                                 <input type="text" class="form-control" id="signInput" 
                                        placeholder="Enter sign name">
-                                <button class="btn btn-primary" onclick="startTraining()">
+                                <button class="btn btn-primary" onclick="startTraining()" id="startTrainingBtn">
                                     Start Training
                                 </button>
                             </div>
                         </div>
                         <div class="btn-group-vertical d-grid gap-2">
-                            <button class="btn btn-success" onclick="saveTraining()">
+                            <button class="btn btn-success" onclick="saveTraining()" id="saveTrainingBtn">
                                 Save Training Data
                             </button>
-                            <button class="btn btn-info" onclick="trainClassifier()">
+                            <button class="btn btn-info" onclick="trainClassifier()" id="trainClassifierBtn">
                                 Train Classifier
                             </button>
+                        </div>
+                        <div class="mt-3">
+                            <label for="removeSignSelect">Remove Sign:</label>
+                            <div class="input-group">
+                                <select class="form-select" id="removeSignSelect">
+                                    <option value="">Select sign to remove</option>
+                                </select>
+                                <button class="btn btn-danger" onclick="removeSign()" id="removeSignBtn">
+                                    Remove Sign
+                                </button>
+                            </div>
                         </div>
                     </div>
                 </div>
@@ -153,6 +174,12 @@
     <!-- JavaScript -->
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/js/bootstrap.bundle.min.js"></script>
     <script>
+        let lastStatus = {
+            training_mode: false,
+            current_sign: null,
+            trained_signs: []
+        };
+
         // Show notification
         function showNotification(message, type = 'success') {
             const notification = document.getElementById('notification');
@@ -168,6 +195,29 @@
         function hideNotification() {
             const notification = document.getElementById('notification');
             notification.className = 'alert alert-dismissible fade';
+        }
+
+        // Update button states
+        function updateButtonStates(isTraining) {
+            const startTrainingBtn = document.getElementById('startTrainingBtn');
+            const saveTrainingBtn = document.getElementById('saveTrainingBtn');
+            const trainClassifierBtn = document.getElementById('trainClassifierBtn');
+            const removeSignBtn = document.getElementById('removeSignBtn');
+            const removeSignSelect = document.getElementById('removeSignSelect');
+
+            if (isTraining) {
+                startTrainingBtn.disabled = true;
+                saveTrainingBtn.disabled = false;
+                trainClassifierBtn.disabled = true;
+                removeSignBtn.disabled = true;
+                removeSignSelect.disabled = true;
+            } else {
+                startTrainingBtn.disabled = false;
+                saveTrainingBtn.disabled = true;
+                trainClassifierBtn.disabled = false;
+                removeSignBtn.disabled = false;
+                removeSignSelect.disabled = false;
+            }
         }
 
         // Start training
@@ -190,10 +240,12 @@
                 
                 if (data.status === 'success') {
                     showNotification(data.message);
+                    updateButtonStates(true);
                 } else {
                     showNotification(data.message, 'danger');
                 }
             } catch (error) {
+                console.error('Error in startTraining:', error);
                 showNotification('Error starting training', 'danger');
             }
         }
@@ -206,10 +258,13 @@
                 
                 if (data.status === 'success') {
                     showNotification(data.message);
+                    updateButtonStates(false);
+                    document.getElementById('signInput').value = '';
                 } else {
                     showNotification(data.message, 'danger');
                 }
             } catch (error) {
+                console.error('Error in saveTraining:', error);
                 showNotification('Error saving training data', 'danger');
             }
         }
@@ -228,7 +283,45 @@
                     showNotification(data.message, 'danger');
                 }
             } catch (error) {
+                console.error('Error in trainClassifier:', error);
                 showNotification('Error training classifier', 'danger');
+            }
+        }
+
+        // Remove sign
+        async function removeSign() {
+            const signSelect = document.getElementById('removeSignSelect');
+            const signToRemove = signSelect.value;
+            
+            if (!signToRemove) {
+                showNotification('Please select a sign to remove', 'warning');
+                return;
+            }
+            
+            try {
+                console.log('Attempting to remove sign:', signToRemove);
+                const response = await fetch('/remove_sign', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({ sign_name: signToRemove })
+                });
+                
+                console.log('Remove sign response:', response.status);
+                const data = await response.json();
+                console.log('Remove sign data:', data);
+                
+                if (data.status === 'success') {
+                    showNotification(data.message);
+                    signSelect.value = '';
+                    await updateStatus();
+                } else {
+                    showNotification(data.message, 'danger');
+                }
+            } catch (error) {
+                console.error('Error in removeSign:', error);
+                showNotification('Error removing sign', 'danger');
             }
         }
 
@@ -240,10 +333,9 @@
                 
                 if (data.status === 'success') {
                     // Update mode
-
-                    // Update mode
+                    const isTraining = data.training_mode;
                     document.getElementById('currentMode').textContent = 
-                        data.training_mode ? 'Training' : 'Detection';
+                        isTraining ? 'Training' : 'Detection';
                     
                     // Update current sign
                     document.getElementById('currentSign').textContent = 
@@ -265,10 +357,42 @@
                     
                     // Update status indicator
                     const statusIndicator = document.getElementById('statusIndicator');
-                    statusIndicator.textContent = data.training_mode ? 
+                    statusIndicator.textContent = isTraining ? 
                         `Training: ${data.current_sign}` : 'Detection Mode';
-                    statusIndicator.style.backgroundColor = data.training_mode ? 
+                    statusIndicator.style.backgroundColor = isTraining ? 
                         'rgba(40, 167, 69, 0.7)' : 'rgba(0, 0, 0, 0.7)';
+                    
+                    // Update remove sign dropdown
+                    const removeSignSelect = document.getElementById('removeSignSelect');
+                    const currentValue = removeSignSelect.value;
+                    
+                    // Clear existing options except the first one
+                    while (removeSignSelect.options.length > 1) {
+                        removeSignSelect.remove(1);
+                    }
+                    
+                    // Add options for each trained sign
+                    data.trained_signs.forEach(sign => {
+                        const option = document.createElement('option');
+                        option.value = sign;
+                        option.textContent = sign;
+                        removeSignSelect.appendChild(option);
+                    });
+                    
+                    // Restore the previously selected value if it still exists
+                    if (currentValue && data.trained_signs.includes(currentValue)) {
+                        removeSignSelect.value = currentValue;
+                    }
+
+                    // Update button states based on mode
+                    updateButtonStates(isTraining);
+
+                    // Update last status
+                    lastStatus = {
+                        training_mode: data.training_mode,
+                        current_sign: data.current_sign,
+                        trained_signs: data.trained_signs
+                    };
                 }
             } catch (error) {
                 console.error('Error updating status:', error);
@@ -281,21 +405,21 @@
             
             switch(event.key.toLowerCase()) {
                 case 's':
-                    saveTraining();
+                    if (!document.getElementById('saveTrainingBtn').disabled) {
+                        saveTraining();
+                    }
                     break;
                 case 't':
-                    document.getElementById('signInput').focus();
+                    if (!document.getElementById('startTrainingBtn').disabled) {
+                        document.getElementById('signInput').focus();
+                    }
                     break;
                 case 'c':
-                    trainClassifier();
+                    if (!document.getElementById('trainClassifierBtn').disabled) {
+                        trainClassifier();
+                    }
                     break;
             }
-        });
-
-        // Initialize tooltips
-        var tooltipTriggerList = [].slice.call(document.querySelectorAll('[data-bs-toggle="tooltip"]'));
-        var tooltipList = tooltipTriggerList.map(function (tooltipTriggerEl) {
-            return new bootstrap.Tooltip(tooltipTriggerEl);
         });
 
         // Update status every second

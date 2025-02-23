@@ -106,6 +106,61 @@ class SignLanguageDetector:
                 raise RuntimeError(f"Failed to initialize SignLanguageDetector: {e}")
 
 
+        def remove_sign(self, sign_name):
+            """
+            Remove a sign and its training data from the system
+            
+            Args:
+                sign_name (str): Name of the sign to remove
+                
+            Returns:
+                bool: True if successful, False otherwise
+            """
+            try:
+                print(f"Starting sign removal process for: {sign_name}")  # Debug log
+                
+                # Verify sign exists
+                if sign_name not in self.trained_signs:
+                    print(f"Sign {sign_name} not found in trained_signs")  # Debug log
+                    return False
+                    
+                # Remove from trained signs list
+                self.trained_signs.remove(sign_name)
+                print(f"Removed {sign_name} from trained_signs")  # Debug log
+                
+                # Remove training data for this sign
+                if sign_name in self.training_data:
+                    del self.training_data[sign_name]
+                    print(f"Removed {sign_name} training data")  # Debug log
+                
+                # Save updated training data to file
+                try:
+                    self.save_training_data()
+                    print("Saved updated training data")  # Debug log
+                except Exception as e:
+                    print(f"Error saving training data: {e}")  # Debug log
+                    return False
+                
+                # Retrain classifier if there are still signs
+                if self.trained_signs:
+                    try:
+                        self.train_classifier()
+                        print("Retrained classifier successfully")  # Debug log
+                    except Exception as e:
+                        print(f"Error retraining classifier: {e}")  # Debug log
+                        return False
+                        
+                # Clear translation history
+                self.translation_history = []
+                
+                print(f"Successfully completed removal of sign: {sign_name}")  # Debug log
+                return True
+                
+            except Exception as e:
+                print(f"Error removing sign {sign_name}: {e}")  # Debug log
+                return False
+
+
         def detect_landmarks(self, frame) -> Tuple[List, np.ndarray]:
             """Detect hand landmarks in the given frame"""
             try:
@@ -315,7 +370,10 @@ class SignLanguageDetector:
                 return False
 
         def predict_sign(self, landmarks: List) -> Tuple[str, float]:
-            """Predict sign with confidence score"""
+            """
+            Enhanced prediction with multiple confidence checks and smoothing
+            Returns: Tuple of (predicted_sign, confidence_score)
+            """
             try:
                 if not self.classifier or not landmarks:
                     return "No sign detected", 0.0
@@ -330,16 +388,56 @@ class SignLanguageDetector:
                 # Create DataFrame for prediction
                 features_df = pd.DataFrame([features], columns=feature_names)
                 
-                # Get prediction and confidence
-                prediction = self.classifier.predict(features_df)
+                # Get prediction probabilities
                 probabilities = self.classifier.predict_proba(features_df)
-                confidence = float(np.max(probabilities))
                 
-                if confidence >= self.confidence_threshold:
-                    return self.label_encoder.inverse_transform(prediction)[0], confidence
-                else:
-                    return "Unknown sign", confidence
+                # Enhanced confidence scoring
+                max_prob = float(np.max(probabilities))
+                second_highest_prob = float(np.partition(probabilities[0], -2)[-2])
+                
+                # Calculate confidence metrics
+                prob_difference = max_prob - second_highest_prob  # Difference from second highest
+                entropy = -np.sum(probabilities * np.log2(probabilities + 1e-10))  # Prediction entropy
+                
+                # Multi-factor confidence score
+                confidence_score = (
+                    max_prob * 0.5 +  # Base probability weight
+                    prob_difference * 0.3 +  # Distinctiveness weight
+                    (1 - entropy/np.log2(len(self.trained_signs))) * 0.2  # Entropy weight
+                )
+                
+                # Dynamic confidence thresholds
+                base_threshold = self.confidence_threshold
+                entropy_threshold = 0.3  # Maximum allowed entropy
+                min_prob_diff = 0.2     # Minimum probability difference
+                
+                # Get predicted class
+                predicted_class = self.classifier.predict(features_df)[0]
+                predicted_sign = self.label_encoder.inverse_transform([predicted_class])[0]
+                
+                # Apply strict confidence checks
+                if (confidence_score >= base_threshold and
+                    entropy <= entropy_threshold and
+                    prob_difference >= min_prob_diff):
                     
+                    # Additional stability check using moving average
+                    if not hasattr(self, 'recent_predictions'):
+                        self.recent_predictions = []
+                    
+                    self.recent_predictions.append((predicted_sign, confidence_score))
+                    if len(self.recent_predictions) > 5:  # Keep last 5 predictions
+                        self.recent_predictions.pop(0)
+                    
+                    # Check prediction stability
+                    if len(self.recent_predictions) >= 3:
+                        recent_signs = [p[0] for p in self.recent_predictions[-3:]]
+                        if len(set(recent_signs)) == 1:  # Last 3 predictions are the same
+                            return predicted_sign, confidence_score
+                        
+                    return "Unstable prediction", 0.0
+                
+                return "Low confidence", 0.0
+                
             except Exception as e:
                 print(f"Error in predict_sign: {e}")
                 return "Error in prediction", 0.0
@@ -419,18 +517,38 @@ class SignLanguageDetector:
             except Exception as e:
                 print(f"Error saving training data: {e}")
 
-
         def update_translation_history(self, sign: str):
-            """Update translation history with non-blocking speech"""
+            """
+            Updated translation history with improved filtering
+            """
             try:
-                if sign in ["No sign detected", "Unknown sign", "Error in prediction"]:
+                if sign in ["No sign detected", "Unknown sign", "Error in prediction", 
+                        "Low confidence", "Unstable prediction"]:
                     return
                     
                 current_time = datetime.now()
                 
-                # Check cooldown
+                # Enhanced cooldown logic with stability check
                 if (self.last_prediction != sign or 
                     (current_time - self.last_prediction_time) > self.prediction_cooldown):
+                    
+                    # Add confidence threshold to history tracking
+                    if not hasattr(self, 'confidence_history'):
+                        self.confidence_history = []
+                    
+                    # Track recent confidences for adaptive thresholding
+                    self.confidence_history.append(self.last_confidence)
+                    if len(self.confidence_history) > 10:
+                        self.confidence_history.pop(0)
+                    
+                    # Adaptive confidence threshold based on recent history
+                    if len(self.confidence_history) >= 5:
+                        mean_confidence = np.mean(self.confidence_history)
+                        std_confidence = np.std(self.confidence_history)
+                        adaptive_threshold = mean_confidence - std_confidence
+                        
+                        if self.last_confidence < adaptive_threshold:
+                            return  # Skip unstable predictions
                     
                     # Add timestamp
                     timestamp = current_time.strftime("%H:%M:%S")
@@ -448,6 +566,7 @@ class SignLanguageDetector:
                     # Update tracking
                     self.last_prediction = sign
                     self.last_prediction_time = current_time
+                    self.last_confidence = self.last_confidence  # Store for adaptive thresholding
                     
             except Exception as e:
                 print(f"Error in update_translation_history: {e}")
