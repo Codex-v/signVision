@@ -4,7 +4,6 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Sign Language Detection</title>
-    <!-- Bootstrap CSS -->
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/css/bootstrap.min.css" rel="stylesheet">
     <style>
         .video-container {
@@ -13,19 +12,16 @@
             max-width: 800px;
             margin: 0 auto;
         }
-        
         .video-feed {
             width: 100%;
             height: auto;
             border-radius: 8px;
             box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
         }
-        
         .translation-history {
             max-height: 300px;
             overflow-y: auto;
         }
-        
         .status-indicator {
             position: absolute;
             top: 10px;
@@ -35,16 +31,13 @@
             background-color: rgba(0, 0, 0, 0.7);
             color: white;
         }
-
         .card {
             box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
             margin-bottom: 20px;
         }
-
         .btn-group-vertical > .btn {
             margin-bottom: 10px;
         }
-
         .alert {
             position: fixed;
             top: 20px;
@@ -52,8 +45,6 @@
             z-index: 1000;
             display: none;
         }
-
-        /* Add styles for disabled state */
         .btn:disabled {
             cursor: not-allowed;
             opacity: 0.6;
@@ -61,10 +52,9 @@
     </style>
 </head>
 <body>
-    <!-- Navigation -->
     <nav class="navbar navbar-expand-lg navbar-dark bg-dark">
         <div class="container">
-            <a class="navbar-brand" href="/">Sign Language Detection System</a>
+            <a class="navbar-brand" href="/">Sign Language Detection</a>
             <div class="ms-auto">
                 <span class="navbar-text text-light">Welcome, {{ username }}</span>
                 <a href="/logout" class="btn btn-outline-light ms-3">Logout</a>
@@ -72,75 +62,64 @@
         </div>
     </nav>
 
-    <!-- Main Content -->
     <div class="container mt-4">
-        <!-- Alert for notifications -->
         <div class="alert alert-dismissible fade" role="alert" id="notification">
             <span id="notification-text"></span>
             <button type="button" class="btn-close" onclick="hideNotification()"></button>
         </div>
 
         <div class="row">
-            <!-- Video Feed Column -->
             <div class="col-lg-8">
                 <div class="card">
-                    <div class="card-header">
-                        <h5 class="card-title mb-0">Live Detection</h5>
-                    </div>
+                    <div class="card-header"><h5>Live Detection</h5></div>
                     <div class="card-body p-0">
                         <div class="video-container">
-                            <img src="{{ url_for('video_feed') }}" class="video-feed">
+                            <img src="{{ url_for('video_feed') }}" class="video-feed" alt="Live camera feed">
                             <div class="status-indicator" id="statusIndicator">Loading...</div>
                         </div>
                     </div>
                 </div>
             </div>
 
-            <!-- Controls Column -->
             <div class="col-lg-4">
-                <!-- Training Controls -->
                 <div class="card">
-                    <div class="card-header">
-                        <h5 class="card-title mb-0">Training Controls</h5>
-                    </div>
+                    <div class="card-header"><h5>Training Controls</h5></div>
                     <div class="card-body">
                         <div class="form-group mb-3">
                             <label for="signInput">Sign Name:</label>
                             <div class="input-group">
-                                <input type="text" class="form-control" id="signInput" 
-                                       placeholder="Enter sign name">
-                                <button class="btn btn-primary" onclick="startTraining()" id="startTrainingBtn">
-                                    Start Training
-                                </button>
+                                <input type="text" class="form-control" id="signInput" placeholder="Enter sign name">
+                                <button class="btn btn-primary" onclick="startTraining()" id="startTrainingBtn">Start Training</button>
                             </div>
                         </div>
                         <div class="btn-group-vertical d-grid gap-2">
-                            <button class="btn btn-success" onclick="saveTraining()" id="saveTrainingBtn">
-                                Save Training Data
-                            </button>
-                            <button class="btn btn-info" onclick="trainClassifier()" id="trainClassifierBtn">
-                                Train Classifier
-                            </button>
+                            <button class="btn btn-success" onclick="saveTraining()" id="saveTrainingBtn">Save Training</button>
+                            <button class="btn btn-info" onclick="trainClassifier()" id="trainClassifierBtn">Train Classifier</button>
                         </div>
                         <div class="mt-3">
                             <label for="removeSignSelect">Remove Sign:</label>
                             <div class="input-group">
                                 <select class="form-select" id="removeSignSelect">
-                                    <option value="">Select sign to remove</option>
+                                    <option value="">Select sign</option>
                                 </select>
-                                <button class="btn btn-danger" onclick="removeSign()" id="removeSignBtn">
-                                    Remove Sign
-                                </button>
+                                <button class="btn btn-danger" onclick="removeSign()" id="removeSignBtn">Remove</button>
+                            </div>
+                        </div>
+                        <div class="mt-3">
+                            <label for="updateSignSelect">Update Sign:</label>
+                            <div class="input-group">
+                                <select class="form-select" id="updateSignSelect">
+                                    <option value="">Select sign</option>
+                                </select>
+                                <input type="text" class="form-control" id="newSignName" placeholder="New name">
+                                <button class="btn btn-warning" onclick="updateSign()" id="updateSignBtn">Update</button>
                             </div>
                         </div>
                     </div>
                 </div>
 
-                <!-- Translation History -->
                 <div class="card">
-                    <div class="card-header">
-                        <h5 class="card-title mb-0">Translation History</h5>
-                    </div>
+                    <div class="card-header"><h5>Translation History</h5></div>
                     <div class="card-body">
                         <div class="translation-history">
                             <ul class="list-group" id="translationHistory"></ul>
@@ -148,22 +127,13 @@
                     </div>
                 </div>
 
-                <!-- System Status -->
                 <div class="card">
-                    <div class="card-header">
-                        <h5 class="card-title mb-0">System Status</h5>
-                    </div>
+                    <div class="card-header"><h5>System Status</h5></div>
                     <div class="card-body">
                         <ul class="list-group">
-                            <li class="list-group-item">
-                                Mode: <span id="currentMode">Detection</span>
-                            </li>
-                            <li class="list-group-item">
-                                Current Sign: <span id="currentSign">None</span>
-                            </li>
-                            <li class="list-group-item">
-                                Trained Signs: <span id="trainedSigns">None</span>
-                            </li>
+                            <li class="list-group-item">Mode: <span id="currentMode">Detection</span></li>
+                            <li class="list-group-item">Current Sign: <span id="currentSign">None</span></li>
+                            <li class="list-group-item">Trained Signs: <span id="trainedSigns">None</span></li>
                         </ul>
                     </div>
                 </div>
@@ -171,262 +141,117 @@
         </div>
     </div>
 
-    <!-- JavaScript -->
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/js/bootstrap.bundle.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.5.1/socket.io.js"></script>
     <script>
-        let lastStatus = {
-            training_mode: false,
-            current_sign: null,
-            trained_signs: []
-        };
+        let lastStatus = { training_mode: false, current_sign: null, trained_signs: [] };
+        const socket = io.connect('http://' + document.domain + ':' + location.port);
 
-        // Show notification
         function showNotification(message, type = 'success') {
             const notification = document.getElementById('notification');
-            const text = document.getElementById('notification-text');
-            
             notification.className = `alert alert-${type} alert-dismissible fade show`;
-            text.textContent = message;
-            
+            document.getElementById('notification-text').textContent = message;
             setTimeout(hideNotification, 3000);
         }
 
-        // Hide notification
         function hideNotification() {
-            const notification = document.getElementById('notification');
-            notification.className = 'alert alert-dismissible fade';
+            document.getElementById('notification').className = 'alert alert-dismissible fade';
         }
 
-        // Update button states
         function updateButtonStates(isTraining) {
-            const startTrainingBtn = document.getElementById('startTrainingBtn');
-            const saveTrainingBtn = document.getElementById('saveTrainingBtn');
-            const trainClassifierBtn = document.getElementById('trainClassifierBtn');
-            const removeSignBtn = document.getElementById('removeSignBtn');
-            const removeSignSelect = document.getElementById('removeSignSelect');
-
-            if (isTraining) {
-                startTrainingBtn.disabled = true;
-                saveTrainingBtn.disabled = false;
-                trainClassifierBtn.disabled = true;
-                removeSignBtn.disabled = true;
-                removeSignSelect.disabled = true;
-            } else {
-                startTrainingBtn.disabled = false;
-                saveTrainingBtn.disabled = true;
-                trainClassifierBtn.disabled = false;
-                removeSignBtn.disabled = false;
-                removeSignSelect.disabled = false;
-            }
+            document.getElementById('startTrainingBtn').disabled = isTraining;
+            document.getElementById('saveTrainingBtn').disabled = !isTraining;
+            document.getElementById('trainClassifierBtn').disabled = isTraining;
+            document.getElementById('removeSignBtn').disabled = isTraining;
+            document.getElementById('removeSignSelect').disabled = isTraining;
+            document.getElementById('updateSignBtn').disabled = isTraining;
+            document.getElementById('updateSignSelect').disabled = isTraining;
         }
 
-        // Start training
         async function startTraining() {
             const signName = document.getElementById('signInput').value;
-            if (!signName) {
-                showNotification('Please enter a sign name', 'warning');
-                return;
-            }
-            
-            try {
-                const response = await fetch('/start_training', {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json'
-                    },
-                    body: JSON.stringify({ sign_name: signName })
-                });
-                const data = await response.json();
-                
-                if (data.status === 'success') {
-                    showNotification(data.message);
-                    updateButtonStates(true);
-                } else {
-                    showNotification(data.message, 'danger');
-                }
-            } catch (error) {
-                console.error('Error in startTraining:', error);
-                showNotification('Error starting training', 'danger');
-            }
+            if (!signName) return showNotification('Enter a sign name', 'warning');
+            const response = await fetch('/start_training', {
+                method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({sign_name: signName})
+            });
+            const data = await response.json();
+            showNotification(data.message, data.status === 'success' ? 'success' : 'danger');
+            if (data.status === 'success') updateButtonStates(true);
         }
 
-        // Save training data
         async function saveTraining() {
-            try {
-                const response = await fetch('/save_training');
-                const data = await response.json();
-                
-                if (data.status === 'success') {
-                    showNotification(data.message);
-                    updateButtonStates(false);
-                    document.getElementById('signInput').value = '';
-                } else {
-                    showNotification(data.message, 'danger');
-                }
-            } catch (error) {
-                console.error('Error in saveTraining:', error);
-                showNotification('Error saving training data', 'danger');
+            const response = await fetch('/save_training', {method: 'POST'});
+            const data = await response.json();
+            showNotification(data.message, data.status === 'success' ? 'success' : 'danger');
+            if (data.status === 'success') {
+                updateButtonStates(false);
+                document.getElementById('signInput').value = '';
             }
         }
 
-        // Train classifier
         async function trainClassifier() {
-            try {
-                const response = await fetch('/train_classifier');
-                const data = await response.json();
-                
-                if (data.status === 'success') {
-                    showNotification(data.message);
-                    document.getElementById('trainedSigns').textContent = 
-                        data.trained_signs.join(', ');
-                } else {
-                    showNotification(data.message, 'danger');
-                }
-            } catch (error) {
-                console.error('Error in trainClassifier:', error);
-                showNotification('Error training classifier', 'danger');
-            }
+            const response = await fetch('/train_classifier', {method: 'POST'});
+            const data = await response.json();
+            showNotification(data.message, data.status === 'success' ? 'success' : 'danger');
+            if (data.status === 'success') document.getElementById('trainedSigns').textContent = data.trained_signs.join(', ');
         }
 
-        // Remove sign
         async function removeSign() {
-            const signSelect = document.getElementById('removeSignSelect');
-            const signToRemove = signSelect.value;
-            
-            if (!signToRemove) {
-                showNotification('Please select a sign to remove', 'warning');
-                return;
-            }
-            
-            try {
-                console.log('Attempting to remove sign:', signToRemove);
-                const response = await fetch('/remove_sign', {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json'
-                    },
-                    body: JSON.stringify({ sign_name: signToRemove })
-                });
+            const signToRemove = document.getElementById('removeSignSelect').value;
+            if (!signToRemove) return showNotification('Select a sign to remove', 'warning');
+            const response = await fetch('/remove_sign', {
+                method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({sign_name: signToRemove})
+            });
+            const data = await response.json();
+            showNotification(data.message, data.status === 'success' ? 'success' : 'danger');
+        }
+
+        async function updateSign() {
+            const oldName = document.getElementById('updateSignSelect').value;
+            const newName = document.getElementById('newSignName').value;
+            if (!oldName || !newName) return showNotification('Select a sign and enter a new name', 'warning');
+            const response = await fetch('/update_sign', {
+                method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({old_name: oldName, new_name: newName})
+            });
+            const data = await response.json();
+            showNotification(data.message, data.status === 'success' ? 'success' : 'danger');
+            if (data.status === 'success') document.getElementById('newSignName').value = '';
+        }
+
+        function updateStatus(data) {
+            if (data.status === 'success') {
+                document.getElementById('currentMode').textContent = data.training_mode ? 'Training' : 'Detection';
+                document.getElementById('currentSign').textContent = data.current_sign || 'None';
+                document.getElementById('trainedSigns').textContent = data.trained_signs.length ? data.trained_signs.join(', ') : 'None';
+                const historyElement = document.getElementById('translationHistory');
+                historyElement.innerHTML = data.history.map(entry => `<li class="list-group-item">${entry}</li>`).join('');
+                document.getElementById('statusIndicator').textContent = data.training_mode ? `Training: ${data.current_sign}` : 'Detection Mode';
+                document.getElementById('statusIndicator').style.backgroundColor = data.training_mode ? 'rgba(40, 167, 69, 0.7)' : 'rgba(0, 0, 0, 0.7)';
                 
-                console.log('Remove sign response:', response.status);
-                const data = await response.json();
-                console.log('Remove sign data:', data);
+                const removeSignSelect = document.getElementById('removeSignSelect');
+                const updateSignSelect = document.getElementById('updateSignSelect');
+                removeSignSelect.innerHTML = '<option value="">Select sign</option>' + data.trained_signs.map(sign => `<option value="${sign}">${sign}</option>`).join('');
+                updateSignSelect.innerHTML = '<option value="">Select sign</option>' + data.trained_signs.map(sign => `<option value="${sign}">${sign}</option>`).join('');
                 
-                if (data.status === 'success') {
-                    showNotification(data.message);
-                    signSelect.value = '';
-                    await updateStatus();
-                } else {
-                    showNotification(data.message, 'danger');
-                }
-            } catch (error) {
-                console.error('Error in removeSign:', error);
-                showNotification('Error removing sign', 'danger');
+                updateButtonStates(data.training_mode);
+                lastStatus = data;
             }
         }
 
-        // Update system status
-        async function updateStatus() {
-            try {
-                const response = await fetch('/get_status');
-                const data = await response.json();
-                
-                if (data.status === 'success') {
-                    // Update mode
-                    const isTraining = data.training_mode;
-                    document.getElementById('currentMode').textContent = 
-                        isTraining ? 'Training' : 'Detection';
-                    
-                    // Update current sign
-                    document.getElementById('currentSign').textContent = 
-                        data.current_sign || 'None';
-                    
-                    // Update trained signs
-                    document.getElementById('trainedSigns').textContent = 
-                        data.trained_signs.length > 0 ? data.trained_signs.join(', ') : 'None';
-                    
-                    // Update translation history
-                    const historyElement = document.getElementById('translationHistory');
-                    historyElement.innerHTML = '';
-                    data.history.forEach(entry => {
-                        const li = document.createElement('li');
-                        li.className = 'list-group-item';
-                        li.textContent = entry;
-                        historyElement.appendChild(li);
-                    });
-                    
-                    // Update status indicator
-                    const statusIndicator = document.getElementById('statusIndicator');
-                    statusIndicator.textContent = isTraining ? 
-                        `Training: ${data.current_sign}` : 'Detection Mode';
-                    statusIndicator.style.backgroundColor = isTraining ? 
-                        'rgba(40, 167, 69, 0.7)' : 'rgba(0, 0, 0, 0.7)';
-                    
-                    // Update remove sign dropdown
-                    const removeSignSelect = document.getElementById('removeSignSelect');
-                    const currentValue = removeSignSelect.value;
-                    
-                    // Clear existing options except the first one
-                    while (removeSignSelect.options.length > 1) {
-                        removeSignSelect.remove(1);
-                    }
-                    
-                    // Add options for each trained sign
-                    data.trained_signs.forEach(sign => {
-                        const option = document.createElement('option');
-                        option.value = sign;
-                        option.textContent = sign;
-                        removeSignSelect.appendChild(option);
-                    });
-                    
-                    // Restore the previously selected value if it still exists
-                    if (currentValue && data.trained_signs.includes(currentValue)) {
-                        removeSignSelect.value = currentValue;
-                    }
+        socket.on('status_update', function(data) {
+            updateStatus(data);
+        });
 
-                    // Update button states based on mode
-                    updateButtonStates(isTraining);
-
-                    // Update last status
-                    lastStatus = {
-                        training_mode: data.training_mode,
-                        current_sign: data.current_sign,
-                        trained_signs: data.trained_signs
-                    };
-                }
-            } catch (error) {
-                console.error('Error updating status:', error);
-            }
-        }
-
-        // Handle keyboard shortcuts
-        document.addEventListener('keydown', function(event) {
-            if (event.target.tagName === 'INPUT') return; // Ignore when typing in input fields
-            
-            switch(event.key.toLowerCase()) {
-                case 's':
-                    if (!document.getElementById('saveTrainingBtn').disabled) {
-                        saveTraining();
-                    }
-                    break;
-                case 't':
-                    if (!document.getElementById('startTrainingBtn').disabled) {
-                        document.getElementById('signInput').focus();
-                    }
-                    break;
-                case 'c':
-                    if (!document.getElementById('trainClassifierBtn').disabled) {
-                        trainClassifier();
-                    }
-                    break;
+        document.addEventListener('keydown', event => {
+            if (event.target.tagName === 'INPUT') return;
+            switch (event.key.toLowerCase()) {
+                case 's': if (!document.getElementById('saveTrainingBtn').disabled) saveTraining(); break;
+                case 't': if (!document.getElementById('startTrainingBtn').disabled) document.getElementById('signInput').focus(); break;
+                case 'c': if (!document.getElementById('trainClassifierBtn').disabled) trainClassifier(); break;
             }
         });
 
-        // Update status every second
-        setInterval(updateStatus, 1000);
-
-        // Initial status update
-        updateStatus();
+        // Removed setInterval(updateStatus, 1000); WebSocket handles updates now
     </script>
 </body>
 </html>

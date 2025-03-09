@@ -1,70 +1,75 @@
-from flask import Flask, Response, render_template, jsonify, request, session, redirect, url_for, flash
+from flask import Flask, Response, render_template, jsonify, request, session, redirect, url_for
+from flask_socketio import SocketIO, emit
 import cv2
 from sign2 import SignLanguageDetector
 import threading
-import json
-import time
 import mysql.connector
 from mysql.connector import Error
 import hashlib
+import os
 
 app = Flask(__name__)
 app.secret_key = 'app8isCool'  # Change this to a secure secret key
+socketio = SocketIO(app)  # Initialize Flask-SocketIO
 
-# Global variables for sharing state between threads
+# Global variables
 detector = None
 camera = None
 frame_lock = threading.Lock()
 current_frame = None
 detection_running = False
-translation_history = []
 
 # Database configuration
 DB_CONFIG = {
     'host': 'localhost',
+    'user': 'root',
     'user': 'root',
     'password': 'root',
     'database': 'visionMaster'
 }
 
 def create_db_connection():
-    """Create database connection"""
+    # Creates and returns a MySQL database connection
     try:
-        connection = mysql.connector.connect(**DB_CONFIG)
-        return connection
+        return mysql.connector.connect(**DB_CONFIG)
     except Error as e:
         print(f"Error connecting to MySQL database: {e}")
         return None
 
 def init_database():
-    """Initialize database and create users table if it doesn't exist"""
+    # Initializes database with users and signs tables
     connection = create_db_connection()
     if connection:
         try:
             cursor = connection.cursor()
-            
-            # Create users table
-            create_table_query = """
-            CREATE TABLE IF NOT EXISTS users (
-                id INT AUTO_INCREMENT PRIMARY KEY,
-                username VARCHAR(50) UNIQUE NOT NULL,
-                password VARCHAR(256) NOT NULL,
-                email VARCHAR(100) UNIQUE NOT NULL,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            )
-            """
-            cursor.execute(create_table_query)
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS users (
+                    id INT AUTO_INCREMENT PRIMARY KEY,
+                    username VARCHAR(50) UNIQUE NOT NULL,
+                    password VARCHAR(256) NOT NULL,
+                    email VARCHAR(100) UNIQUE NOT NULL,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS signs (
+                    id INT AUTO_INCREMENT PRIMARY KEY,
+                    user_id INT,
+                    name VARCHAR(50) NOT NULL,
+                    training_data MEDIUMTEXT,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+                )
+            """)
             connection.commit()
-            
         except Error as e:
-            print(f"Error creating table: {e}")
+            print(f"Error initializing database: {e}")
         finally:
-            if connection.is_connected():
-                cursor.close()
-                connection.close()
+            cursor.close()
+            connection.close()
 
 def hash_password(password):
-    """Hash password using SHA-256"""
+    # Hashes a password using SHA-256
     return hashlib.sha256(password.encode()).hexdigest()
 
 class Camera:
@@ -72,8 +77,6 @@ class Camera:
         self.video = cv2.VideoCapture(0)
         if not self.video.isOpened():
             raise RuntimeError("Could not open camera.")
-        
-        # Set camera properties for better performance
         self.video.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
         self.video.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
         self.video.set(cv2.CAP_PROP_FPS, 30)
@@ -82,364 +85,230 @@ class Camera:
         self.video.release()
 
     def get_frame(self):
+        # Captures and returns a single frame from the camera
         success, frame = self.video.read()
-        if not success:
-            return None
-        return frame
+        return frame if success else None
 
-def generate_frames():
-    """Generate frames for video stream"""
+def generate_frames(user_id):
+    # Generates video frames for streaming with sign detection for a specific user
     global current_frame, detector, detection_running
-    
     while detection_running:
         if camera is None:
             break
-            
         frame = camera.get_frame()
         if frame is None:
             continue
-
-        # Process frame with detector
         with frame_lock:
             landmarks_list, processed_frame = detector.detect_landmarks(frame)
-            
             for landmarks in landmarks_list:
-                # If in training mode, collect samples
                 if detector.capture_mode and detector.current_sign:
-                    if detector.collect_training_sample(landmarks):
-                        print(f"\nCompleted collecting samples for {detector.current_sign}")
+                    if detector.collect_training_sample(user_id, landmarks):
+                        print(f"Completed collecting samples for {detector.current_sign}")
                     else:
-                        remaining = detector.samples_needed - len(detector.training_data)
-                        cv2.putText(processed_frame, 
-                                  f"Training '{detector.current_sign}': {remaining} samples left",
-                                  (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 
-                                  0.7, (0, 255, 0), 2)
+                        remaining = detector.samples_needed - len(detector.training_data.get(user_id, []))
+                        cv2.putText(processed_frame, f"Training '{detector.current_sign}': {remaining} left",
+                                    (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
                 else:
-                    # Detection mode
-                    predicted_sign, confidence = detector.predict_sign(landmarks)
+                    predicted_sign, confidence = detector.predict_sign(user_id, landmarks)
                     if confidence >= detector.confidence_threshold:
                         detector.update_translation_history(predicted_sign)
-                        
-                    # Display prediction
-                    cv2.putText(processed_frame,
-                              f"Sign: {predicted_sign} ({confidence:.2f})",
-                              (10, 30), cv2.FONT_HERSHEY_SIMPLEX,
-                              0.7, (0, 255, 0), 2)
-
-            # Draw translation panel
+                    cv2.putText(processed_frame, f"Sign: {predicted_sign} ({confidence:.2f})",
+                                (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
             processed_frame = detector.draw_translation_panel(processed_frame)
             current_frame = processed_frame
-
-        # Convert frame to JPEG for streaming
         ret, buffer = cv2.imencode('.jpg', processed_frame)
         frame = buffer.tobytes()
-        
-        yield (b'--frame\r\n'
-               b'Content-Type: image/jpeg\r\n\r\n' + frame + b'\r\n')
+        socketio.emit('status_update', get_status_data(user_id))  # Emit status update via WebSocket
+        yield (b'--frame\r\nContent-Type: image/jpeg\r\n\r\n' + frame + b'\r\n')
 
+def get_status_data(user_id):
+    # Returns current system status as a dictionary
+    if detector:
+        return {
+            'status': 'success',
+            'training_mode': detector.capture_mode,
+            'current_sign': detector.current_sign,
+            'trained_signs': detector.get_trained_signs(user_id),
+            'history': detector.translation_history
+        }
+    return {'status': 'error', 'message': 'Detector not initialized'}
 
-def remove_sign_from_db(sign_name):
-    """Remove a sign from the database"""
+@app.route('/')
+def index():
+    # Renders the login page or redirects to dashboard if logged in
+    return redirect(url_for('dashboard')) if 'user_id' in session else render_template('login_registration.html')
+
+@app.route('/login', methods=['POST'])
+def login():
+    # Authenticates user and logs them in
+    email = request.form.get('email')
+    password = request.form.get('password')
+    if not email or not password:
+        return jsonify({'status': 'error', 'message': 'Email and password required'})
+    connection = create_db_connection()
+    if connection:
+        try:
+            cursor = connection.cursor(dictionary=True)
+            cursor.execute("SELECT * FROM users WHERE email = %s", (email,))
+            user = cursor.fetchone()
+            if user and hash_password(password) == user['password']:
+                session['user_id'] = user['id']
+                session['username'] = user['username']
+                return jsonify({'status': 'success', 'message': 'Login successful', 'redirect': url_for('dashboard')})
+            return jsonify({'status': 'error', 'message': 'Invalid credentials'})
+        except Error as e:
+            print(f"Database error: {e}")
+            return jsonify({'status': 'error', 'message': f'Login failed: {str(e)}'})
+        finally:
+            cursor.close()
+            connection.close()
+
+@app.route('/register', methods=['POST'])
+def register():
+    # Registers a new user in the database
+    username = request.form.get('username')
+    email = request.form.get('email')
+    password = request.form.get('password')
+    if not all([username, email, password]):
+        return jsonify({'status': 'error', 'message': 'All fields required'})
     connection = create_db_connection()
     if connection:
         try:
             cursor = connection.cursor()
-            delete_query = "DELETE FROM signs WHERE name = %s"
-            cursor.execute(delete_query, (sign_name,))
+            cursor.execute("SELECT * FROM users WHERE username = %s OR email = %s", (username, email))
+            if cursor.fetchone():
+                return jsonify({'status': 'error', 'message': 'Username or email exists'})
+            hashed_password = hash_password(password)
+            cursor.execute("INSERT INTO users (username, email, password) VALUES (%s, %s, %s)",
+                           (username, email, hashed_password))
             connection.commit()
-            return True
+            return jsonify({'status': 'success', 'message': 'Registration successful'})
         except Error as e:
-            print(f"Error removing sign from database: {e}")
-            return False
+            return jsonify({'status': 'error', 'message': f'Registration failed: {str(e)}'})
         finally:
-            if connection.is_connected():
-                cursor.close()
-                connection.close()
-    return False
-
-
-
-@app.route('/')
-def index():
-    """Render main page"""
-    if 'user_id' in session:
-        return redirect(url_for('dashboard'))
-    return render_template('login_registration.html')
-
-
-
-@app.route('/remove_sign', methods=['POST'])
-def remove_sign():
-    """Remove a trained sign from the system"""
-    global detector
-    if not detector:
-        return jsonify({
-            'status': 'error',
-            'message': 'Detector not initialized'
-        })
-
-    try:
-        data = request.get_json()
-        if not data or 'sign_name' not in data:
-            return jsonify({
-                'status': 'error',
-                'message': 'No sign name provided'
-            })
-
-        sign_name = data['sign_name']
-        print(f"Attempting to remove sign: {sign_name}")  # Debug log
-
-        if sign_name not in detector.trained_signs:
-            return jsonify({
-                'status': 'error',
-                'message': f'Sign {sign_name} not found in trained signs'
-            })
-
-        success = detector.remove_sign(sign_name)
-        if success:
-            # Remove the sign from the database
-            db_success = remove_sign_from_db(sign_name)
-            if db_success:
-                return jsonify({
-                    'status': 'success',
-                    'message': f'Successfully removed sign: {sign_name}',
-                    'trained_signs': detector.trained_signs  # Send updated list
-                })
-            else:
-                return jsonify({
-                    'status': 'error',
-                    'message': f'Failed to remove sign from database: {sign_name}'
-                })
-        else:
-            return jsonify({
-                'status': 'error',
-                'message': f'Failed to remove sign: {sign_name}'
-            })
-
-    except Exception as e:
-        print(f"Error in remove_sign route: {str(e)}")  # Debug log
-        return jsonify({
-            'status': 'error',
-            'message': f'Server error: {str(e)}'
-        })
-
-    
-@app.route('/login', methods=['POST'])
-def login():
-    """Handle user login"""
-    if request.method == 'POST':
-        email = request.form.get('email')
-        password = request.form.get('password')
-        
-        if not all([email, password]):
-            return jsonify({
-                'status': 'error',
-                'message': 'Email and password are required'
-            })
-        
-        connection = create_db_connection()
-        if connection:
-            try:
-                cursor = connection.cursor(dictionary=True)
-                
-                # First, get the user without checking password
-                cursor.execute("SELECT * FROM users WHERE email = %s", (email,))
-                user = cursor.fetchone()
-
-                
-                if user:
-                    # Compare the hashed password
-                    input_password_hash = hash_password(password)
-                    stored_password_hash = user['password']
-                    
-                    print(f"Input password hash: {input_password_hash}")
-                    print(f"Stored password hash: {stored_password_hash}")
-                    
-                    if input_password_hash == stored_password_hash:
-                        session['user_id'] = user['id']
-                        session['username'] = user['username']
-                        return jsonify({
-                            'status': 'success',
-                            'message': 'Login successful',
-                            'redirect': url_for('dashboard')
-                        })
-                
-                return jsonify({
-                    'status': 'error',
-                    'message': 'Invalid email or password'
-                })
-                
-            except Error as e:
-                print(f"Database error: {e}")  # Add debug logging
-                return jsonify({
-                    'status': 'error',
-                    'message': f'Login failed: {str(e)}'
-                })
-            finally:
-                if connection.is_connected():
-                    cursor.close()
-                    connection.close()
-
-@app.route('/register', methods=['POST'])
-def register():
-    """Handle user registration"""
-    if request.method == 'POST':
-        username = request.form.get('username')
-        email = request.form.get('email')
-        password = request.form.get('password')
-        
-        if not all([username, email, password]):
-            return jsonify({
-                'status': 'error',
-                'message': 'All fields are required'
-            })
-        
-        connection = create_db_connection()
-        if connection:
-            try:
-                cursor = connection.cursor()
-                
-                # Check if username or email already exists
-                cursor.execute("SELECT * FROM users WHERE username = %s OR email = %s", 
-                             (username, email))
-                if cursor.fetchone():
-                    return jsonify({
-                        'status': 'error',
-                        'message': 'Username or email already exists'
-                    })
-                
-                # Insert new user
-                hashed_password = hash_password(password)
-                cursor.execute(
-                    "INSERT INTO users (username, email, password) VALUES (%s, %s, %s)",
-                    (username, email, hashed_password)
-                )
-                connection.commit()
-                
-                return jsonify({
-                    'status': 'success',
-                    'message': 'Registration successful! Please login.'
-                })
-                
-            except Error as e:
-                return jsonify({
-                    'status': 'error',
-                    'message': f'Registration failed: {str(e)}'
-                })
-            finally:
-                if connection.is_connected():
-                    cursor.close()
-                    connection.close()
-        return Response(status=200)
+            cursor.close()
+            connection.close()
 
 @app.route('/logout')
 def logout():
-    """Handle user logout"""
+    # Logs out the user by clearing the session
     session.clear()
     return redirect(url_for('index'))
 
 @app.route('/dashboard')
 def dashboard():
-    """Display dashboard"""
+    # Renders the main dashboard if user is logged in
     if 'user_id' not in session:
         return redirect(url_for('index'))
     return render_template('index.html', username=session.get('username'))
 
 @app.route('/video_feed')
 def video_feed():
-    """Video streaming route"""
-    return Response(generate_frames(),
-                    mimetype='multipart/x-mixed-replace; boundary=frame')
+    # Streams video feed with detected signs for the logged-in user
+    if 'user_id' not in session:
+        return jsonify({'status': 'error', 'message': 'Login required'}), 401
+    user_id = session['user_id']
+    return Response(generate_frames(user_id), mimetype='multipart/x-mixed-replace; boundary=frame')
 
 @app.route('/start_training', methods=['POST'])
 def start_training():
-    """Start training for a new sign"""
-    global detector
+    # Starts training mode for a new sign for the logged-in user
+    if 'user_id' not in session:
+        return jsonify({'status': 'error', 'message': 'Login required'})
     if detector:
         data = request.get_json()
         sign_name = data.get('sign_name')
         if sign_name:
-            detector.start_training(sign_name)
-            return jsonify({
-                'status': 'success', 
-                'message': f'Started training for {sign_name}'
-            })
-        return jsonify({
-            'status': 'error', 
-            'message': 'No sign name provided'
-        })
-    return jsonify({
-        'status': 'error', 
-        'message': 'Detector not initialized'
-    })
+            detector.start_training(sign_name, session['user_id'])
+            return jsonify({'status': 'success', 'message': f'Started training for {sign_name}'})
+        return jsonify({'status': 'error', 'message': 'Sign name required'})
+    return jsonify({'status': 'error', 'message': 'Detector not initialized'})
 
-@app.route('/save_training')
+@app.route('/save_training', methods=['POST'])
 def save_training():
-    """Save current training data"""
-    global detector
+    # Saves training data to the database for the logged-in user
+    if 'user_id' not in session:
+        return jsonify({'status': 'error', 'message': 'Login required'})
     if detector:
-        detector.save_training_data()
-        return jsonify({
-            'status': 'success',
-            'message': 'Training data saved successfully'
-        })
-    return jsonify({
-        'status': 'error',
-        'message': 'Detector not initialized'
-    })
+        success = detector.save_training_data(session['user_id'])
+        return jsonify({'status': 'success' if success else 'error',
+                        'message': 'Training data saved' if success else 'Failed to save training data'})
+    return jsonify({'status': 'error', 'message': 'Detector not initialized'})
 
-@app.route('/train_classifier')
+@app.route('/train_classifier', methods=['POST'])
 def train_classifier():
-    """Train the classifier"""
-    global detector
+    # Trains the classifier with user-specific data
+    if 'user_id' not in session:
+        return jsonify({'status': 'error', 'message': 'Login required'})
     if detector:
-        success = detector.train_classifier()
-        if success:
-            return jsonify({
-                'status': 'success',
-                'message': 'Classifier trained successfully',
-                'trained_signs': detector.trained_signs
-            })
-        return jsonify({
-            'status': 'error',
-            'message': 'Training failed - ensure you have enough data'
-        })
-    return jsonify({
-        'status': 'error',
-        'message': 'Detector not initialized'
-    })
+        success = detector.train_classifier(session['user_id'])
+        return jsonify({'status': 'success' if success else 'error',
+                        'message': 'Classifier trained' if success else 'Training failed',
+                        'trained_signs': detector.get_trained_signs(session['user_id'])})
+    return jsonify({'status': 'error', 'message': 'Detector not initialized'})
 
-@app.route('/get_status')
-def get_status():
-    """Get current system status"""
-    global detector
+@app.route('/remove_sign', methods=['POST'])
+def remove_sign():
+    # Removes a sign from the user's dataset
+    if 'user_id' not in session:
+        return jsonify({'status': 'error', 'message': 'Login required'})
     if detector:
-        return jsonify({
-            'status': 'success',
-            'training_mode': detector.capture_mode,
-            'current_sign': detector.current_sign,
-            'trained_signs': detector.trained_signs if detector.trained_signs else [],
-            'history': detector.translation_history
-        })
-    return jsonify({
-        'status': 'error',
-        'message': 'Detector not initialized'
-    })
+        data = request.get_json()
+        sign_name = data.get('sign_name')
+        if not sign_name:
+            return jsonify({'status': 'error', 'message': 'Sign name required'})
+        success = detector.remove_sign(session['user_id'], sign_name)
+        return jsonify({'status': 'success' if success else 'error',
+                        'message': f'Removed {sign_name}' if success else f'Failed to remove {sign_name}',
+                        'trained_signs': detector.get_trained_signs(session['user_id'])})
+    return jsonify({'status': 'error', 'message': 'Detector not initialized'})
+
+@app.route('/update_sign', methods=['POST'])
+def update_sign():
+    # Updates an existing sign's training data for the user
+    if 'user_id' not in session:
+        return jsonify({'status': 'error', 'message': 'Login required'})
+    if detector:
+        data = request.get_json()
+        old_name = data.get('old_name')
+        new_name = data.get('new_name')
+        if not old_name or not new_name:
+            return jsonify({'status': 'error', 'message': 'Old and new sign names required'})
+        success = detector.update_sign(session['user_id'], old_name, new_name)
+        return jsonify({'status': 'success' if success else 'error',
+                        'message': f'Updated {old_name} to {new_name}' if success else 'Update failed',
+                        'trained_signs': detector.get_trained_signs(session['user_id'])})
+    return jsonify({'status': 'error', 'message': 'Detector not initialized'})
+
+@app.route('/get_status', methods=['GET'])
+def get_status():
+    # Returns current system status for the logged-in user (kept for compatibility)
+    if 'user_id' not in session:
+        return jsonify({'status': 'error', 'message': 'Login required'})
+    return jsonify(get_status_data(session['user_id']))
+
+@socketio.on('connect')
+def handle_connect():
+    # Handles WebSocket connection
+    if 'user_id' in session:
+        print(f"WebSocket connected for user {session['user_id']}")
+    else:
+        emit('status_update', {'status': 'error', 'message': 'Login required'})
 
 def start_detection():
-    """Initialize and start detection"""
+    # Initializes the detection system
     global detector, camera, detection_running
     try:
         detector = SignLanguageDetector()
         camera = Camera()
         detection_running = True
-        print("Detection system initialized successfully")
+        print("Detection system initialized")
     except Exception as e:
         print(f"Error starting detection: {e}")
         detection_running = False
 
 def cleanup():
-    """Cleanup resources"""
+    # Cleans up resources on shutdown
     global camera, detection_running
     detection_running = False
     if camera:
@@ -447,10 +316,10 @@ def cleanup():
     print("Cleanup completed")
 
 if __name__ == '__main__':
+    init_database()
     try:
         start_detection()
-        # Run Flask app
-        app.run(debug=True, host='0.0.0.0', port=4000)
+        socketio.run(app, debug=True, host='0.0.0.0', port=4000)
     except Exception as e:
         print(f"Error running application: {e}")
     finally:
