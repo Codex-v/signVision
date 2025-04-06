@@ -145,7 +145,30 @@
     <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.5.1/socket.io.js"></script>
     <script>
         let lastStatus = { training_mode: false, current_sign: null, trained_signs: [] };
-        const socket = io.connect('http://' + document.domain + ':' + location.port);
+        const socket = io.connect('http://' + document.domain + ':' + location.port, {
+            reconnection: true,
+            reconnectionAttempts: 5,
+            reconnectionDelay: 1000
+        });
+
+        socket.on('connect', function() {
+            console.log('WebSocket connected');
+        });
+
+        socket.on('disconnect', function() {
+            console.log('WebSocket disconnected');
+            showNotification('Lost connection to server. Reconnecting...', 'warning');
+        });
+
+        socket.on('reconnect', function(attempt) {
+            console.log('WebSocket reconnected after ' + attempt + ' attempts');
+            showNotification('Reconnected to server', 'success');
+        });
+
+        socket.on('reconnect_error', function(error) {
+            console.error('WebSocket reconnection failed: ', error);
+            showNotification('Failed to reconnect to server', 'danger');
+        });
 
         function showNotification(message, type = 'success') {
             const notification = document.getElementById('notification');
@@ -168,20 +191,34 @@
             document.getElementById('updateSignSelect').disabled = isTraining;
         }
 
+        function updateDropdowns(trainedSigns) {
+            console.log('Updating dropdowns with:', trainedSigns);
+            const removeSignSelect = document.getElementById('removeSignSelect');
+            const updateSignSelect = document.getElementById('updateSignSelect');
+            removeSignSelect.innerHTML = '<option value="">Select sign</option>' + 
+                trainedSigns.map(sign => `<option value="${sign}">${sign}</option>`).join('');
+            updateSignSelect.innerHTML = '<option value="">Select sign</option>' + 
+                trainedSigns.map(sign => `<option value="${sign}">${sign}</option>`).join('');
+        }
+
         async function startTraining() {
             const signName = document.getElementById('signInput').value;
             if (!signName) return showNotification('Enter a sign name', 'warning');
+            console.log('Starting training for:', signName);
             const response = await fetch('/start_training', {
                 method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({sign_name: signName})
             });
             const data = await response.json();
+            console.log('Start training response:', data);
             showNotification(data.message, data.status === 'success' ? 'success' : 'danger');
             if (data.status === 'success') updateButtonStates(true);
         }
 
         async function saveTraining() {
+            console.log('Saving training data');
             const response = await fetch('/save_training', {method: 'POST'});
             const data = await response.json();
+            console.log('Save training response:', data);
             showNotification(data.message, data.status === 'success' ? 'success' : 'danger');
             if (data.status === 'success') {
                 updateButtonStates(false);
@@ -190,56 +227,80 @@
         }
 
         async function trainClassifier() {
+            console.log('Training classifier');
             const response = await fetch('/train_classifier', {method: 'POST'});
             const data = await response.json();
+            console.log('Train classifier response:', data);
             showNotification(data.message, data.status === 'success' ? 'success' : 'danger');
-            if (data.status === 'success') document.getElementById('trainedSigns').textContent = data.trained_signs.join(', ');
+            if (data.status === 'success') {
+                document.getElementById('trainedSigns').textContent = data.trained_signs.length ? data.trained_signs.join(', ') : 'None';
+                updateDropdowns(data.trained_signs);
+            }
         }
 
         async function removeSign() {
             const signToRemove = document.getElementById('removeSignSelect').value;
             if (!signToRemove) return showNotification('Select a sign to remove', 'warning');
+            console.log('Removing sign:', signToRemove);
             const response = await fetch('/remove_sign', {
                 method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({sign_name: signToRemove})
             });
             const data = await response.json();
+            console.log('Remove sign response:', data);
             showNotification(data.message, data.status === 'success' ? 'success' : 'danger');
+            if (data.status === 'success') {
+                document.getElementById('trainedSigns').textContent = data.trained_signs.length ? data.trained_signs.join(', ') : 'None';
+                updateDropdowns(data.trained_signs);
+                document.getElementById('removeSignSelect').value = '';
+            }
         }
 
         async function updateSign() {
             const oldName = document.getElementById('updateSignSelect').value;
             const newName = document.getElementById('newSignName').value;
             if (!oldName || !newName) return showNotification('Select a sign and enter a new name', 'warning');
+            console.log('Updating sign from', oldName, 'to', newName);
             const response = await fetch('/update_sign', {
                 method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({old_name: oldName, new_name: newName})
             });
             const data = await response.json();
+            console.log('Update sign response:', data);
             showNotification(data.message, data.status === 'success' ? 'success' : 'danger');
-            if (data.status === 'success') document.getElementById('newSignName').value = '';
+            if (data.status === 'success') {
+                document.getElementById('trainedSigns').textContent = data.trained_signs.length ? data.trained_signs.join(', ') : 'None';
+                updateDropdowns(data.trained_signs);
+                document.getElementById('updateSignSelect').value = '';
+                document.getElementById('newSignName').value = '';
+            }
         }
 
         function updateStatus(data) {
             if (data.status === 'success') {
+                console.log('WebSocket status update:', data);
                 document.getElementById('currentMode').textContent = data.training_mode ? 'Training' : 'Detection';
                 document.getElementById('currentSign').textContent = data.current_sign || 'None';
-                document.getElementById('trainedSigns').textContent = data.trained_signs.length ? data.trained_signs.join(', ') : 'None';
+                // Only update trainedSigns and dropdowns if not in a manual action
+                if (!document.activeElement || document.activeElement.tagName !== 'BUTTON') {
+                    document.getElementById('trainedSigns').textContent = data.trained_signs.length ? data.trained_signs.join(', ') : 'None';
+                    updateDropdowns(data.trained_signs);
+                }
                 const historyElement = document.getElementById('translationHistory');
                 historyElement.innerHTML = data.history.map(entry => `<li class="list-group-item">${entry}</li>`).join('');
                 document.getElementById('statusIndicator').textContent = data.training_mode ? `Training: ${data.current_sign}` : 'Detection Mode';
                 document.getElementById('statusIndicator').style.backgroundColor = data.training_mode ? 'rgba(40, 167, 69, 0.7)' : 'rgba(0, 0, 0, 0.7)';
-                
-                const removeSignSelect = document.getElementById('removeSignSelect');
-                const updateSignSelect = document.getElementById('updateSignSelect');
-                removeSignSelect.innerHTML = '<option value="">Select sign</option>' + data.trained_signs.map(sign => `<option value="${sign}">${sign}</option>`).join('');
-                updateSignSelect.innerHTML = '<option value="">Select sign</option>' + data.trained_signs.map(sign => `<option value="${sign}">${sign}</option>`).join('');
-                
                 updateButtonStates(data.training_mode);
                 lastStatus = data;
+            } else {
+                console.warn('Status update failed:', data.message);
             }
         }
 
         socket.on('status_update', function(data) {
-            updateStatus(data);
+            try {
+                updateStatus(data);
+            } catch (e) {
+                console.error('Error processing status update:', e);
+            }
         });
 
         document.addEventListener('keydown', event => {
@@ -250,8 +311,6 @@
                 case 'c': if (!document.getElementById('trainClassifierBtn').disabled) trainClassifier(); break;
             }
         });
-
-        // Removed setInterval(updateStatus, 1000); WebSocket handles updates now
     </script>
 </body>
 </html>
