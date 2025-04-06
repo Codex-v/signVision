@@ -16,6 +16,7 @@ from datetime import datetime, timedelta
 import json
 import mysql.connector
 from mysql.connector import Error
+from speaker import TTSUtils
 
 class ConfigManager:
     """Manages configuration settings for the sign language detector"""
@@ -305,7 +306,7 @@ class SignLanguageDetector:
             
             # Speak every time a valid sign is detected - no cooldown here
             if confidence >= self.confidence_threshold and predicted_sign not in ["No sign detected", "Unknown sign", "Error in prediction"]:
-                self.speak_text(predicted_sign)
+                #self.speak_text(predicted_sign)
                 print("called speak_text")
             print(f"Predicted sign: {predicted_sign} with confidence: {confidence:.2f}")
             
@@ -319,6 +320,8 @@ class SignLanguageDetector:
                         (user_id, predicted_sign, confidence)
                     )
                     conn.commit()
+                    TTSUtils.queue_speech(predicted_sign)
+                
                 except Error as e:
                     print(f"Error logging detection: {e}")
                 finally:
